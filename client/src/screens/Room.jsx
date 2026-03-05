@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useSocket } from "../context/socketProvider";
-import peer from "../service/peer";
+import peer from "../service/peer"; 
 
 export default function Room() {
   const socket = useSocket();
@@ -12,38 +12,25 @@ export default function Room() {
   const myVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
 
-  const handelUserJoined = useCallback(
-    ({ email, id }) => {
-      console.log(`${email} joined`);
-      setRemoteSocketId(id);
-    },
-    [socket],
-  );
+  const handelUserJoined = useCallback(({ email, id }) => {
+    console.log(`${email} joined`);
+    setRemoteSocketId(id);
+  }, []);
 
   const handleCallUser = useCallback(async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true,
-    });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
     const offer = await peer.getOffer();
     socket.emit("user:call", { to: remoteSocketId, offer });
     setMyStream(stream);
   }, [remoteSocketId, socket]);
 
-  const handleIncommingCall = useCallback(
-    async ({ from, offer }) => {
-      setRemoteSocketId(from);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: true,
-      });
-      setMyStream(stream);
-      console.log(`Incoming Call`, from, offer);
-      const ans = await peer.getAnswer(offer);
-      socket.emit("call:accepted", { to: from, ans });
-    },
-    [socket],
-  );
+  const handleIncommingCall = useCallback(async ({ from, offer }) => {
+    setRemoteSocketId(from);
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    setMyStream(stream);
+    const ans = await peer.getAnswer(offer);
+    socket.emit("call:accepted", { to: from, ans });
+  }, [socket]);
 
   const sendStreams = useCallback(() => {
     for (const track of MyStream.getTracks()) {
@@ -51,31 +38,42 @@ export default function Room() {
     }
   }, [MyStream]);
 
-  const handleCallAccepted = useCallback(
-    ({ from, ans }) => {
-      peer.setLocalDescription(ans);
-      console.log("Call Accepted!");
-      sendStreams();
-    },
-    [sendStreams],
-  );
+ 
+  const handleCallAccepted = useCallback(({ from, ans }) => {
+    peer.setRemoteDescription(ans); 
+    console.log("Call Accepted!");
+    sendStreams();
+  }, [sendStreams]);
 
-  useEffect(() => {
-    if (MyStream && myVideoRef.current) {
-      myVideoRef.current.srcObject = MyStream;
+  
+  const handleIncomingIce = useCallback(async ({ candidate }) => {
+    if (candidate) {
+      await peer.peer.addIceCandidate(new RTCIceCandidate(candidate));
     }
-  }, [MyStream]);
-
-  useEffect(() => {
-    if (remoteStream && remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
+  }, []);
 
   const handleNegoNeeded = useCallback(async () => {
     const offer = await peer.getOffer();
     socket.emit("peer:nego:needed", { offer, to: remoteSocketId });
   }, [remoteSocketId, socket]);
+
+  const handleNegoNeedIncomming = useCallback(async ({ from, offer }) => {
+    const ans = await peer.getAnswer(offer);
+    socket.emit("peer:nego:done", { to: from, ans });
+  }, [socket]);
+
+
+  const handleNegoNeedFinal = useCallback(async ({ ans }) => {
+    await peer.setRemoteDescription(ans);
+  }, []);
+
+  useEffect(() => {
+    if (MyStream && myVideoRef.current) myVideoRef.current.srcObject = MyStream;
+  }, [MyStream]);
+
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
+  }, [remoteStream]);
 
   useEffect(() => {
     peer.peer.addEventListener("negotiationneeded", handleNegoNeeded);
@@ -84,18 +82,7 @@ export default function Room() {
     };
   }, [handleNegoNeeded]);
 
-  const handleNegoNeedIncomming = useCallback(
-    async ({ from, offer }) => {
-      const ans = await peer.getAnswer(offer);
-      socket.emit("peer:nego:done", { to: from, ans });
-    },
-    [socket],
-  );
-
-  const handleNegoNeedFinal = useCallback(async ({ ans }) => {
-    await peer.setLocalDescription(ans);
-  }, []);
-
+  // UseEffect for Tracks
   useEffect(() => {
     peer.peer.addEventListener("track", async (ev) => {
       const remoteStream = ev.streams;
@@ -105,26 +92,34 @@ export default function Room() {
   }, []);
 
   useEffect(() => {
+    const handleIceCandidate = (ev) => {
+      if (ev.candidate && remoteSocketId) {
+        socket.emit("ice:candidate", { candidate: ev.candidate, to: remoteSocketId });
+      }
+    };
+    peer.peer.addEventListener("icecandidate", handleIceCandidate);
+    return () => {
+      peer.peer.removeEventListener("icecandidate", handleIceCandidate);
+    };
+  }, [socket, remoteSocketId]);
+
+  useEffect(() => {
     socket.on("user:Joined", handelUserJoined);
     socket.on("incomming:call", handleIncommingCall);
     socket.on("call:accepted", handleCallAccepted);
     socket.on("peer:nego:needed", handleNegoNeedIncomming);
     socket.on("peer:nego:final", handleNegoNeedFinal);
+    socket.on("ice:candidate", handleIncomingIce); 
+
     return () => {
-      socket.off("user:joined", handelUserJoined);
+      socket.off("user:Joined", handelUserJoined); 
       socket.off("incomming:call", handleIncommingCall);
       socket.off("call:accepted", handleCallAccepted);
       socket.off("peer:nego:needed", handleNegoNeedIncomming);
       socket.off("peer:nego:final", handleNegoNeedFinal);
+      socket.off("ice:candidate", handleIncomingIce); 
     };
-  }, [
-    socket,
-    handelUserJoined,
-    handleIncommingCall,
-    handleCallAccepted,
-    handleNegoNeedIncomming,
-    handleNegoNeedFinal,
-  ]);
+  }, [socket, handelUserJoined, handleIncommingCall, handleCallAccepted, handleNegoNeedIncomming, handleNegoNeedFinal, handleIncomingIce]);
 
   return (
     <div>
@@ -136,28 +131,13 @@ export default function Room() {
       {MyStream && (
         <>
           <h4>My Stream</h4>
-          <video
-            ref={myVideoRef}
-            autoPlay
-            playsInline
-            muted
-            height="300px"
-            width="300px"
-            style={{ borderRadius: "10px", backgroundColor: "#000" }}
-          />
+          <video ref={myVideoRef} autoPlay playsInline muted height="300px" width="300px" style={{ borderRadius: "10px", backgroundColor: "#000" }} />
         </>
       )}
       {remoteStream && (
         <>
           <h4>Remote Stream</h4>
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            height="300px"
-            width="300px"
-            style={{ borderRadius: "10px", backgroundColor: "#000" }}
-          />
+          <video ref={remoteVideoRef} autoPlay playsInline height="300px" width="300px" style={{ borderRadius: "10px", backgroundColor: "#000" }} />
         </>
       )}
     </div>
