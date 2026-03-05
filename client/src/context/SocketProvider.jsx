@@ -8,7 +8,11 @@ export const useSocket = () => {
 };
 
 export default function socketProvider(props) {
-  const socket = useMemo(() => io("http://localhost:8000"), []);
+  // const socket = useMemo(() => io("http://localhost:8000"), []);
+  const socket = useMemo(
+    () => io("https://webrtc-socket-server-bigp.onrender.com"),
+    [],
+  );
   return (
     <SocketContext.Provider value={socket}>
       {props.children}
